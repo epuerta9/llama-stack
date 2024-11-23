@@ -15,7 +15,7 @@ from llama_stack.apis.safety import *  # noqa: F403
 from llama_stack.apis.datasetio import *  # noqa: F403
 from llama_stack.apis.scoring import *  # noqa: F403
 from llama_stack.apis.eval import *  # noqa: F403
-
+from faststream.nats import NatsBroker
 
 class MemoryRouter(Memory):
     """Routes to an provider based on the memory bank identifier"""
@@ -117,10 +117,18 @@ class InferenceRouter(Inference):
             logprobs=logprobs,
         )
         provider = self.routing_table.get_provider_impl(model_id)
+        # print(f"provider:  {provider}")
         if stream:
             return (chunk async for chunk in await provider.chat_completion(**params))
         else:
-            return await provider.chat_completion(**params)
+            result =  await provider.chat_completion(**params)
+
+        async with NatsBroker() as broker:
+            await broker.publish(
+                result,
+                subject="alpha.inference.chat-completion.out",
+            )
+        return result
 
     async def completion(
         self,

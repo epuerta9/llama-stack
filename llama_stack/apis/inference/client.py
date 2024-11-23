@@ -12,7 +12,7 @@ import fire
 import httpx
 
 from llama_models.llama3.api.datatypes import ImageMedia, URL
-
+from faststream.nats import NatsBroker
 from pydantic import BaseModel
 
 from llama_models.llama3.api import *  # noqa: F403
@@ -68,6 +68,7 @@ class InferenceClient(Inference):
             stream=stream,
             logprobs=logprobs,
         )
+
         if stream:
             return self._stream_chat_completion(request)
         else:

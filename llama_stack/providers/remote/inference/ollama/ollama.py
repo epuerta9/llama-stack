@@ -163,6 +163,7 @@ class OllamaInferenceAdapter(Inference, ModelsProtocolPrivate):
 
     async def _nonstream_completion(self, request: CompletionRequest) -> AsyncGenerator:
         params = await self._get_params(request)
+
         r = await self.client.generate(**params)
         assert isinstance(r, dict)
 
@@ -254,9 +255,14 @@ class OllamaInferenceAdapter(Inference, ModelsProtocolPrivate):
             r = await self.client.chat(**params)
         else:
             r = await self.client.generate(**params)
+
+        #BUG: r does not return a dict EPUERTA AUSTIN HACKATHON current r response:model='llama3.2:3b-instruct-fp16' created_at='2024-11-22T05:12:58.986141879Z' done=True done_reason='stop' total_duration=6708345755 load_duration=16318227 promp....t
+        log.info(f"r: {r.__dict__}")
+        #quick and dirty hack to convert r to a dict
+        r = dict(r)
         assert isinstance(r, dict)
 
-        if "message" in r:
+        if "message" in dict(r):
             choice = OpenAICompatCompletionChoice(
                 finish_reason=r["done_reason"] if r["done"] else None,
                 text=r["message"]["content"],

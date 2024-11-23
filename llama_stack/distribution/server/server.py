@@ -23,8 +23,9 @@ from typing import Any, Dict, Optional
 import httpx
 import yaml
 
-from fastapi import Body, FastAPI, HTTPException, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Request, Response, Depends
 from fastapi.exceptions import RequestValidationError
+from faststream.nats import NatsBroker
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 from termcolor import cprint
@@ -38,6 +39,7 @@ from llama_stack.providers.utils.telemetry.tracing import (
     SpanStatus,
     start_trace,
 )
+from llama_stack.distribution.server import router
 from llama_stack.distribution.datatypes import *  # noqa: F403
 from llama_stack.distribution.request_headers import set_request_provider_data
 from llama_stack.distribution.resolver import InvalidProviderError
@@ -56,6 +58,7 @@ from .endpoints import get_all_api_endpoints
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 
+from functools import wraps
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
     log = file if hasattr(file, "write") else sys.stderr
@@ -280,6 +283,41 @@ def create_dynamic_typed_route(func: Any, method: str):
     endpoint.__signature__ = sig.replace(parameters=new_params)
 
     return endpoint
+def convert_route_to_dot_notation(route: str) -> str:
+    # Remove leading slash if present
+    if route.startswith('/'):
+        route = route[1:]
+    
+    # Replace slashes with dots
+    return route.replace('/', '.')
+
+
+def decorator(func):
+    """ wrapper function around result for nats"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("in the wrapper")
+        result = func(*args, **kwargs)
+
+        print(result)
+        return "ok"
+    return wrapper
+
+async def response_decorator(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        """ Deprecated: This raises a pydantic error on AsyncGenerator. Unable to get this to work"""
+        print("in the wrapper")
+        result = await func(*args, **kwargs)
+        # async with NatsBroker() as broker:
+        #     await broker.publish(
+        #         "finished",
+        #         subject="alpha.inference.chat-completion.out",
+        #     )
+        print(result)
+        return result
+    return wrapper
+
 
 
 def main():
@@ -368,7 +406,7 @@ def main():
 
         endpoints = all_endpoints[api]
         impl = impls[api]
-
+        print(f"impl: {impl}")
         for endpoint in endpoints:
             if not hasattr(impl, endpoint.name):
                 # ideally this should be a typing violation already
@@ -380,6 +418,15 @@ def main():
                 warnings.filterwarnings(
                     "ignore", category=UserWarning, module="pydantic._internal._fields"
                 )
+                if "inference" in endpoint.route:
+                    subject_notation = convert_route_to_dot_notation(endpoint.route)
+                    print(f"subject_notation: {subject_notation}")
+                    print(impl_method)
+                    router.subscriber(subject_notation)(impl_method)
+
+
+                    #error with AsyncGenerator Type and pydantic. Not enough time to figure this one out
+                    #router.publisher(f"{subject_notation}.out")(decorator(impl_method))
                 getattr(app, endpoint.method)(endpoint.route, response_model=None)(
                     create_dynamic_typed_route(
                         impl_method,
@@ -392,11 +439,14 @@ def main():
             cprint(f" {endpoint.method.upper()} {endpoint.route}", "white")
 
     print("")
+    print("starting the hacked server")
     app.exception_handler(RequestValidationError)(global_exception_handler)
     app.exception_handler(Exception)(global_exception_handler)
     signal.signal(signal.SIGINT, functools.partial(handle_sigint, app))
 
     app.__llama_stack_impls__ = impls
+
+    app.include_router(router)
 
     import uvicorn
 

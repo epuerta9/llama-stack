@@ -277,6 +277,7 @@ async def instantiate_provider(
     additional_protocols = additional_protocols_map()
 
     provider_spec = provider.spec
+    print(f"provider_spec: {provider_spec.module}")
     module = importlib.import_module(provider_spec.module)
 
     args = []
